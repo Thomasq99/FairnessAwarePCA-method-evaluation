@@ -22,8 +22,8 @@ def SPEA_2_Cost(theta, coeff, grouped_data, X, sensitive_col):
         X_2 = grouped_data[group2]
         approx_X_1 = X_1 @ P
         approx_X_2 = X_2 @ P
-        fairness_diff = (re(X_1, approx_X_1) / X_1.shape[0] - re(X_2, approx_X_2) / X_2.shape[
-            0]) ** 2
+
+        fairness_diff = (re(X_1, approx_X_1) / X_1.shape[0] - re(X_2, approx_X_2) / X_2.shape[0]) ** 2
         if fairness_diff > max_fairness_diff:
             max_fairness_diff = fairness_diff
     return [re(X, X @ P) / X.shape[0], max_fairness_diff]
@@ -85,12 +85,14 @@ def SPEA_2_selection(ext_size, pop_ext_size, pop_ext_fit, pop_ext, pop_ext_cost)
     f1_ideal, f2_ideal = min(ext_set_cost[:, 0]), min(ext_set_cost[:, 1])
     f1_worst, f2_worst = max(ext_set_cost[:, 0]), max(ext_set_cost[:, 1])
 
-    if ext_set_cost.shape[0] != 1:
+
+    if (f1_ideal != f1_worst) and (f2_ideal != f2_worst):
         f1_norm = ((ext_set_cost[:, 0] - f1_ideal) / (f1_worst - f1_ideal)).reshape(-1, 1)
         f2_norm = ((ext_set_cost[:, 1] - f2_ideal) / (f2_worst - f2_ideal)).reshape(-1, 1)
     else:  # divide by zero is not possible
         f1_norm = (ext_set_cost[:, 0] - f1_ideal).reshape(-1, 1)
         f2_norm = (ext_set_cost[:, 1] - f2_ideal).reshape(-1, 1)
+
 
     ext_dist_mat = squareform(pdist(np.append(f1_norm, f2_norm, axis=1)))  # distance matrix
     ext_dist_mat -= np.eye(len(f1_norm))  # diagonal minus 1

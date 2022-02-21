@@ -12,10 +12,12 @@ from sklearn.base import BaseEstimator, TransformerMixin
 def preprocess_data(data, sensitive_col):
     """preprocesses a dataset by grouping the dataset per sensitive group and centering each group
     to mean 0"""
-
     grouped_data = []
     for group in sensitive_col.unique():
-        X_group = data[sensitive_col == group].to_numpy()
+        idx = set(sensitive_col[sensitive_col == group].index)
+
+        X_group = data.loc[idx.intersection(set(data.index))].to_numpy()
+
         X_group_centered = X_group #- X_group.mean()
         # TODO check if this is necessary and if I need to normalize the variance
         grouped_data += [X_group_centered]
@@ -249,7 +251,7 @@ class FairnessAwarePCA_MW(BaseEstimator, TransformerMixin):
         return self
 
 
-    def fit_transform(self, X, normalize_std=True, y=None):
+    def fit_transform(self, X, y=None, normalize_std=True):
         U = self._fit(X, normalize_std)
         U  = U[:, :self.d]
         X -= self.mean_
@@ -295,9 +297,9 @@ class FairnessAwarePCA_MW(BaseEstimator, TransformerMixin):
 
             P += P_temp
 
-            P_average = (1 / t) * P
-            avg_loss = [loss(grouped_data[i], grouped_data[i] @ P_average, optimals[i]) /
-                        grouped_data[i].shape[0] for i in range(len(grouped_data))]
+            # P_average = (1 / t) * P
+            # avg_loss = [loss(grouped_data[i], grouped_data[i] @ P_average, optimals[i]) /
+            #             grouped_data[i].shape[0] for i in range(len(grouped_data))]
 
         P = (1 / self.T) * P
         z_vec = [(1 / grouped_data[i].shape[0]) * (constants[i] - sum(sum(covariances[i] * P))) for i
@@ -318,13 +320,13 @@ class FairnessAwarePCA_MW(BaseEstimator, TransformerMixin):
             P = P_last
         P = np.identity(P.shape[0]) - sqrtm(np.identity(P.shape[0]) - P)
 
-        self.components_ = P
+        self.components_ = P.real # remove imaginary part
         return self.components_
 
 
-    def transform(self, X, normalize_std):
+    def transform(self, X):
         X -= self.mean_
-        if normalize_std:
+        if self.normalized:
             X /= self.std_
         X_transformed = X @ self.components_[:, :self.d]
         return X_transformed
@@ -463,7 +465,7 @@ class PostProcessing_Fairness_Aware_PCA(BaseEstimator, TransformerMixin):
         coeff = PCA().fit(X_copy).components_.T  # each column is an eigenvector
 
         # group the data per sensitive feature
-        # TODO check if need to center and normalize
+        # TODO check if need to center and normalize per group
         grouped_data = preprocess_data(X_copy, self.sensitive_col)
 
         # BRUTE FORCE for one feature length pca:
@@ -556,6 +558,8 @@ class PostProcessing_Fairness_Aware_PCA(BaseEstimator, TransformerMixin):
                 pop_ext_cost[0, :] = SPEA_2_Cost(population_external[0, :], coeff, grouped_data,
                                                  X_copy.to_numpy(), self.sensitive_col)
 
+
+
                 # calculate cost for remainder of individuals
                 for i in range(1, pop_size):
                     if np.all(population_external[i, :] == population_external[i - 1, :]):
@@ -567,8 +571,10 @@ class PostProcessing_Fairness_Aware_PCA(BaseEstimator, TransformerMixin):
                 if len(ext_set_cost) != 0:
                     pop_ext_cost = np.append(pop_ext_cost, ext_set_cost, axis=0)
 
+
                 # calculate fitness for the population and external set
                 pop_ext_fit = SPEA_2_fitness(population_external_size, pop_ext_cost, ParK)
+
 
                 # select new individuals
                 ext_set, ext_set_cost, ext_set_fit = SPEA_2_selection(ext_set_size,
@@ -576,9 +582,11 @@ class PostProcessing_Fairness_Aware_PCA(BaseEstimator, TransformerMixin):
                                                                       pop_ext_fit, population_external,
                                                                       pop_ext_cost)
 
+
                 # Stop criteria (seems redundant)
                 if iteration >= self.epochs:
                     break
+
 
                 # create new population from the population and new external set by mating
                 population = SPEA_2_mating_pool(mutation_max, cross_max, ext_set, ext_set_size,
@@ -586,8 +594,9 @@ class PostProcessing_Fairness_Aware_PCA(BaseEstimator, TransformerMixin):
                                                 num_features)
                 population = population[population[:, 0].argsort()]
 
-                if (iteration + 1) % 5 == 0:
-                    print("Finished iteration ", iteration + 1)
+
+                # if (iteration + 1) % 5 == 0:
+                #     print("Finished iteration ", iteration + 1)
 
             # Updating non-dominated solutions
             pareto_cost, pareto_cost_idx = np.unique(ext_set_cost, return_index=True, axis=0)
