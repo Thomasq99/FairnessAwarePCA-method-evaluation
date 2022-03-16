@@ -1,3 +1,4 @@
+import pandas as pd
 from sklearn.decomposition import PCA
 from scipy.linalg import sqrtm
 import numpy as np
@@ -247,35 +248,36 @@ class FairnessAwarePCA_MW(BaseEstimator, TransformerMixin):
 
 
     def fit(self, X, normalize_std=True, y=None):
-        self._fit(X, normalize_std)
+        X_copy = X.copy()
+        self._fit(X_copy, normalize_std)
         return self
 
 
     def fit_transform(self, X, y=None, normalize_std=True):
-        U = self._fit(X, normalize_std)
-        U  = U[:, :self.d]
-        X -= self.mean_
+        X_copy = X.copy()
+        U = self._fit(X_copy, normalize_std)
+        U = U[:, :self.d]
+        X_copy -= self.mean_
         if normalize_std:
-            X /= self.std_
-        return X @ U
+            X_copy /= self.std_
+        return X_copy @ U
 
 
     def _fit(self, X, normalize_std):
-        X_copy = X.copy()
-        self.mean_ = np.mean(X_copy, axis=0)
-        X_copy -= self.mean_
+        self.mean_ = np.mean(X, axis=0)
+        X -= self.mean_
 
         if normalize_std:
             self.normalized = True
-            self.std_ = np.std(X_copy, axis=0)
-            X_copy /= self.std_
+            self.std_ = np.std(X, axis=0)
+            X /= self.std_
         else:
             self.normalized = False
 
-        grouped_data = preprocess_data(X_copy, self.sensitive_col)
+        grouped_data = preprocess_data(X, self.sensitive_col)
 
         # algorithm
-        no_of_cols = X_copy.shape[1]
+        no_of_cols = X.shape[1]
 
         # compute covariances
         covariances = [matrix.T @ matrix for matrix in grouped_data]
@@ -325,10 +327,11 @@ class FairnessAwarePCA_MW(BaseEstimator, TransformerMixin):
 
 
     def transform(self, X):
-        X -= self.mean_
+        X_copy = X.copy()
+        X_copy -= self.mean_
         if self.normalized:
-            X /= self.std_
-        X_transformed = X @ self.components_[:, :self.d]
+            X_copy /= self.std_
+        X_transformed = X_copy @ self.components_[:, :self.d]
         return X_transformed
 
 
@@ -343,37 +346,35 @@ class FairnessAwarePCA_GD(BaseEstimator, TransformerMixin):
         self.num_iterations = num_iterations
         self.loss = loss
 
-
     def fit(self, X, normalize_std=True, y=None):
-        self._fit(X, normalize_std)
+        X_copy = X.copy()
+        self._fit(X_copy, normalize_std)
         return self
 
-
     def fit_transform(self, X, normalize_std=True, y=None):
-        U = self._fit(X, normalize_std)
+        X_copy = X.copy()
+        U = self._fit(X_copy, normalize_std)
         
-        X -= self.mean_
+        X_copy -= self.mean_
         if normalize_std:
-            X /= self.std_
-        return X @ U
-
+            X_copy /= self.std_
+        return X_copy @ U
 
     def _fit(self, X, normalize_std):
-        X_copy = X.copy()
-        self.mean_ = np.mean(X_copy, axis=0)
-        X_copy -= self.mean_
+        self.mean_ = np.mean(X, axis=0)
+        X -= self.mean_
 
         if normalize_std:
             self.normalized = True
-            self.std_ = np.std(X_copy, axis=0)
-            X_copy /= self.std_
+            self.std_ = np.std(X, axis=0)
+            X /= self.std_
         else:
             self.normalized = False
 
-        d = len(X_copy.columns)
-        grouped_data = preprocess_data(X_copy, self.sensitive_col)
+        d = len(X.columns)
+        grouped_data = preprocess_data(X, self.sensitive_col)
         optimals = find_optimal2(grouped_data, self.r)  # find optimal rank r subspace for each group
-        X_arr = X_copy.to_numpy()
+        X_arr = X.to_numpy()
         # TODO check if it is from a normal distribution
         U, _ = np.linalg.qr(np.random.randn(d, self.r))  # randomly initialize orhtonormal projection matrix
 
@@ -399,25 +400,24 @@ class FairnessAwarePCA_GD(BaseEstimator, TransformerMixin):
                 self.components_ = U
                 return self.components_
             else:
-                U, _ = np.linalg.qr(
-                    U + lr * D)  # apply Gram-Schmidt procedure to make columns orthornormal
-                if (t + 1) % 100 == 0:
-                    if self.loss == 'non-pairwise':
-                        objectives = objective_non_pairwise(X_arr, U, grouped_data, optimals)
-                    elif self.loss == 'pairwise':
-                        objectives = objective_pairwise(X_arr, U, grouped_data, optimals)
-                    print("In iteration number ", t + 1, " objective vector is:", objectives)
+                U, _ = np.linalg.qr(U + lr * D)  # apply Gram-Schmidt procedure to make columns orthornormal
+                # if (t + 1) % 100 == 0:
+                #     if self.loss == 'non-pairwise':
+                #         objectives = objective_non_pairwise(X_arr, U, grouped_data, optimals)
+                #     elif self.loss == 'pairwise':
+                #         objectives = objective_pairwise(X_arr, U, grouped_data, optimals)
+                #     print("In iteration number ", t + 1, " objective vector is:", objectives)
 
         self.components_ = U
         return self.components_
 
-
     def transform(self, X):
-        X -= self.mean_
+        X_copy = X.copy()
+        X_copy -= self.mean_
 
         if self.normalized:
-            X /= self.std_
-        X_transformed = X @ self.components_
+            X_copy /= self.std_
+        X_transformed = X_copy @ self.components_
         return X_transformed
 
 
@@ -436,37 +436,45 @@ class PostProcessing_Fairness_Aware_PCA(BaseEstimator, TransformerMixin):
 
 
     def fit(self, X, normalize_std=True, y=None):
-        self._fit(X, normalize_std)
+        X_copy = X.copy()
+        self._fit(X_copy, normalize_std)
         return self
 
 
-    def fit_transform(self, X, normalize_std=True, y=None):
-        U = self._fit(X, normalize_std)
+    def fit_transform(self, X, y=None, normalize_std=True):
+        X_copy = X.copy()
 
-        X -= self.mean_
+        U = self._fit(X_copy, normalize_std)
+
+        X_copy -= self.mean_
         if normalize_std:
-            X /= self.std_
-        return X @ U
+            X_copy /= self.std_
+
+        X_transformed = X_copy @ U
+
+        if isinstance(X_transformed, pd.Series):
+           X_transformed = X_transformed.to_frame()
+
+        return X_transformed
 
 
     def _fit(self, X, normalize_std):
-        X_copy = X.copy()
-        self.mean_ = np.mean(X_copy, axis=0)
-        X_copy -= self.mean_
+        self.mean_ = np.mean(X, axis=0)
+        X -= self.mean_
 
         if normalize_std:
             self.normalized = True
-            self.std_ = np.std(X_copy, axis=0)
-            X_copy /= self.std_
+            self.std_ = np.std(X, axis=0)
+            X /= self.std_
         else:
             self.normalized = False
 
-        num_features = len(X_copy.columns)
-        coeff = PCA().fit(X_copy).components_.T  # each column is an eigenvector
+        num_features = len(X.columns)
+        coeff = PCA().fit(X).components_.T  # each column is an eigenvector
 
         # group the data per sensitive feature
         # TODO check if need to center and normalize per group
-        grouped_data = preprocess_data(X_copy, self.sensitive_col)
+        grouped_data = preprocess_data(X, self.sensitive_col)
 
         # BRUTE FORCE for one feature length pca:
         if self.r == 1:
@@ -474,7 +482,7 @@ class PostProcessing_Fairness_Aware_PCA(BaseEstimator, TransformerMixin):
             # calculate the costs per selected principal component
             costs = []
             for idx_col in range(num_features):
-                costs.append(SPEA_2_Cost([idx_col], coeff, grouped_data, X_copy.to_numpy(), self.sensitive_col))
+                costs.append(SPEA_2_Cost([idx_col], coeff, grouped_data, X.to_numpy(), self.sensitive_col))
 
             costs = np.array(costs)
 
@@ -506,19 +514,26 @@ class PostProcessing_Fairness_Aware_PCA(BaseEstimator, TransformerMixin):
             if len(include) != 1:
                 if self.method == "weighted_sum_scaled":
                     best_cost, best_coeff = weighted_sum_on_scales(pareto_cost, pareto_coeff)
+                    best_coeff = [best_coeff]
 
                 elif self.method == "weighted_sum":
                     best_cost, best_coeff = weighted_sum(pareto_cost, pareto_coeff)
+                    best_coeff = [best_coeff]
+
 
                 elif self.method == "best_RE":
                     best_cost, best_coeff = best_RE(pareto_cost, pareto_coeff)
+                    best_coeff = [best_coeff]
+
 
                 elif self.method == "best_Fairness":
                     best_cost, best_coeff = best_Fairness(pareto_cost, pareto_coeff)
+                    best_coeff = [best_coeff]
 
             else: # only one dominated solution
                 best_cost = pareto_cost[0]
                 best_coeff = pareto_coeff
+
 
         else:
             # FOR MORE THAN ONE FEATURE USE MOFPCA
@@ -556,7 +571,7 @@ class PostProcessing_Fairness_Aware_PCA(BaseEstimator, TransformerMixin):
                 pop_ext_cost = np.zeros((pop_size, 2))
                 # calculate cost for first individual
                 pop_ext_cost[0, :] = SPEA_2_Cost(population_external[0, :], coeff, grouped_data,
-                                                 X_copy.to_numpy(), self.sensitive_col)
+                                                 X.to_numpy(), self.sensitive_col)
 
 
 
@@ -566,7 +581,7 @@ class PostProcessing_Fairness_Aware_PCA(BaseEstimator, TransformerMixin):
                         pop_ext_cost[i, :] = pop_ext_cost[i - 1, :]
                     else:
                         pop_ext_cost[i, :] = SPEA_2_Cost(population_external[i, :], coeff,
-                                                         grouped_data, X_copy.to_numpy(), self.sensitive_col)
+                                                         grouped_data, X.to_numpy(), self.sensitive_col)
 
                 if len(ext_set_cost) != 0:
                     pop_ext_cost = np.append(pop_ext_cost, ext_set_cost, axis=0)
@@ -631,8 +646,14 @@ class PostProcessing_Fairness_Aware_PCA(BaseEstimator, TransformerMixin):
 
 
     def transform(self, X):
-        X -= self.mean_
+
+        X_copy = X.copy()
+        X_copy -= self.mean_
         if self.normalized:
-            X /= self.std_
-        X_transformed = X @ self.components_
+            X_copy /= self.std_
+        X_transformed = X_copy @ self.components_
+
+        if isinstance(X_transformed, pd.Series):
+            X_transformed = X_transformed.to_frame()
+
         return X_transformed
