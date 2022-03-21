@@ -33,8 +33,9 @@ outer_cv = StratifiedKFold(n_splits=6, shuffle=True, random_state=12)
 
 results_dct = {}
 for d in range(1, 21):
-    pipe = Pipeline([('PCA', FairnessAwarePCA_MW(sensitive_col, d, eta, T)), ('svc', SVC)])
+    #pipe = Pipeline([('PCA', FairnessAwarePCA_MW(sensitive_col, d, eta, T)), ('svc', SVC)])
     #pipe = Pipeline([('PCA', PostProcessing_Fairness_Aware_PCA(sensitive_col, d, 0.5, 30)), ('svc', SVC)])
+    pipe = Pipeline([('PCA', FairnessAwarePCA_GD(sensitive_col, d, 1000, 'non-pairwise')), ('svc', SVC)])
     clf = RandomizedSearchCV(estimator=pipe, param_distributions=p_grid_svm, cv=inner_cv, scoring='roc_auc', verbose=2,
                              n_iter=75, n_jobs=-1, refit=True, error_score='raise')
 
@@ -123,5 +124,5 @@ for d in range(1, 21):
     results_dct["results_{}".format(d)] = df
     print("finished d =  {}".format(d))
 
-    with open('PCA_MW_results_SEX.pickle', 'wb') as handle:
+    with open('PCA_GD_results_SEX_non-pairwise.pickle', 'wb') as handle:
         pickle.dump(results_dct, handle, protocol=pickle.HIGHEST_PROTOCOL)

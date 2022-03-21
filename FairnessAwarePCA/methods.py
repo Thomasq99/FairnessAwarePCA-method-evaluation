@@ -351,7 +351,7 @@ class FairnessAwarePCA_GD(BaseEstimator, TransformerMixin):
         self._fit(X_copy, normalize_std)
         return self
 
-    def fit_transform(self, X, normalize_std=True, y=None):
+    def fit_transform(self, X, y=None, normalize_std=True):
         X_copy = X.copy()
         U = self._fit(X_copy, normalize_std)
         
