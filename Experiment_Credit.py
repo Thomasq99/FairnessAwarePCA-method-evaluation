@@ -9,6 +9,8 @@ from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import roc_auc_score
 import pickle
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
 X = pd.read_csv("./data/credit/default_degree.csv", skiprows=[0])
 y = X.pop("default payment next month")
@@ -22,8 +24,9 @@ columns = X.columns
 # defining the parameters
 T = 10
 eta = 1
+d = 10
 
-SVC = sklearn.svm.SVC(kernel='rbf')
+SVC = sklearn.svm.SVC(kernel='rbf', class_weight='balanced')
 
 p_grid_svm = {"svc__C": loguniform(2 ** -5, 2 ** 10), "svc__gamma": loguniform(2 ** -15, 2)}
 
@@ -32,98 +35,101 @@ inner_cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=1)
 outer_cv = StratifiedKFold(n_splits=6, shuffle=True, random_state=12)
 
 results_dct = {}
-for d in range(1, 21):
-    #pipe = Pipeline([('PCA', FairnessAwarePCA_MW(sensitive_col, d, eta, T)), ('svc', SVC)])
-    #pipe = Pipeline([('PCA', PostProcessing_Fairness_Aware_PCA(sensitive_col, d, 0.5, 30)), ('svc', SVC)])
-    #pipe = Pipeline([('PCA', FairnessAwarePCA_GD(sensitive_col, d, 1000, 'non-pairwise')), ('svc', SVC)])
-    pipe = Pipeline([('PCA', FairnessAwarePCA_GD(sensitive_col, d, 1000, 'pairwise')), ('svc', SVC)])
-    clf = RandomizedSearchCV(estimator=pipe, param_distributions=p_grid_svm, cv=inner_cv, scoring='roc_auc', verbose=2,
-                             n_iter=75, n_jobs=-1, refit=True, error_score='raise')
 
-    roc_auc_lst = []
-    RE_lst = []
-    RE_dct = {}
-    AUC_dct = {}
-    iter = 0
-    for train_ix, test_ix in outer_cv.split(X, y):
-        iter += 1
-        # select rows
-        train_X, test_X = X.loc[train_ix, :], X.loc[test_ix, :]
-        train_y, test_y = y.loc[train_ix], y.loc[test_ix]
+# pipe = Pipeline([('PCA', FairnessAwarePCA_MW(sensitive_col, d, eta, T)), ('svc', SVC)])
+# pipe = Pipeline([('PCA', PostProcessing_Fairness_Aware_PCA(sensitive_col, d, 0.5, 30)), ('svc', SVC)])
+# pipe = Pipeline([('PCA', FairnessAwarePCA_GD(sensitive_col, d, 1000, 'non-pairwise')), ('svc', SVC)])
+# pipe = Pipeline([('PCA', FairnessAwarePCA_GD(sensitive_col, 10, 1000, 'pairwise')), ('svc', SVC)])
+pipe = Pipeline([('scaler', StandardScaler()), ('PCA', PCA(d)), ('svc', SVC)])
 
+clf = RandomizedSearchCV(estimator=pipe, param_distributions=p_grid_svm, cv=inner_cv, scoring='roc_auc', verbose=2,
+                         n_iter=75, n_jobs=-1, refit=True, error_score='raise')
 
-        # inner CV
-        search = clf.fit(train_X, train_y)
-        best_model = search.best_estimator_
+roc_auc_lst = []
+RE_lst = []
+RE_dct = {}
+AUC_dct = {}
+iter = 0
+for train_ix, test_ix in outer_cv.split(X, y):
+    iter += 1
+    # select rows
+    train_X, test_X = X.loc[train_ix, :], X.loc[test_ix, :]
+    train_y, test_y = y.loc[train_ix], y.loc[test_ix]
 
-        # compute roc_auc
-        # evaluate model on the hold out dataset
-        yhat = best_model.predict(test_X)
-        # evaluate the model
-        roc_auc = roc_auc_score(test_y, yhat)
-        roc_auc_lst.append(roc_auc)
+    # inner CV
+    search = clf.fit(train_X, train_y)
+    best_model = search.best_estimator_
+    scaler = best_model['scaler']
 
-        pca = best_model['PCA']
+    # compute roc_auc
+    # evaluate model on the hold out dataset
+    yhat = best_model.predict(test_X)
+    # evaluate the model
+    roc_auc = roc_auc_score(test_y, yhat)
+    roc_auc_lst.append(roc_auc)
 
-        # compute fairness score for entire dataset:
+    pca = best_model['PCA']
 
-        # TODO determine which one to use
-        #RE = reconstruction_loss(test_X.to_numpy(), pca.components_) / len(test_X)
-        test_X_transformed = pca.transform(test_X)
+    # compute fairness score for entire dataset:
 
-        # normalize test_x
-        test_X_normalized = test_X.copy()
-        test_X_normalized -= pca.mean_
-        if pca.normalized:
-            test_X_normalized /= pca.std_
+    # TODO determine which one to use
+    # RE = reconstruction_loss(test_X.to_numpy(), pca.components_) / len(test_X)
+    test_X_normalized = scaler.transform(test_X)
+    test_X_transformed = pca.transform(test_X_normalized)
 
-        RE = re(test_X_normalized.to_numpy(), test_X_transformed @ pca.components_[:,:d].T) / len(test_X)
-        RE_lst.append(RE)
+    # normalize test_x
+    #     test_X_normalized = test_X.copy()
+    #     test_X_normalized -= pca.mean_
+    #     if pca.normalized:
+    #         test_X_normalized /= pca.std_
 
-        # compute fairness score per group:
-        groups = preprocess_data(test_X, sensitive_col)
-        groups_y = preprocess_data(test_y, sensitive_col)
+    RE = re(test_X_normalized, pca.inverse_transform(test_X_transformed)) / len(test_X)
+    RE_lst.append(RE)
 
-        for idx, group_data in enumerate(groups):
+    # compute fairness score per group:
+    groups = preprocess_data(test_X, sensitive_col)
+    groups_y = preprocess_data(test_y, sensitive_col)
 
-            if isinstance(group_data, np.ndarray):
-                group_data = pd.DataFrame(group_data, columns=columns)
+    for idx, group_data in enumerate(groups):
 
-            group_data_transformed = pca.transform(group_data)
+        if isinstance(group_data, np.ndarray):
+            group_data = pd.DataFrame(group_data, columns=columns)
 
-            # normalize group_data
-            group_data -= pca.mean_
-            if pca.normalized:
-                group_data /= pca.std_
+        group_data_normalized = scaler.transform(group_data)
+        group_data_transformed = pca.transform(group_data_normalized)
 
+        #         # normalize group_data
+        #         group_data -= pca.mean_
+        #         if pca.normalized:
+        #             group_data /= pca.std_
 
-            re_group = re(group_data.to_numpy(), group_data_transformed @ pca.components_[:,:d].T) / len(group_data)
-            yhat_group = best_model.predict(group_data)
-            y_group = groups_y[idx]
+        re_group = re(group_data_normalized, pca.inverse_transform(group_data_transformed)) / len(group_data)
+        yhat_group = best_model.predict(group_data)
+        y_group = groups_y[idx]
 
-            roc_auc_group = roc_auc_score(y_group, yhat_group)
+        roc_auc_group = roc_auc_score(y_group, yhat_group)
 
-            if str(idx) in RE_dct:
-                RE_dct[str(idx)] += [re_group]
-            else:
-                RE_dct[str(idx)] = [re_group]
+        if str(idx) in RE_dct:
+            RE_dct[str(idx)] += [re_group]
+        else:
+            RE_dct[str(idx)] = [re_group]
 
-            if str(idx) in AUC_dct:
-                AUC_dct[str(idx)] += [roc_auc_group]
-            else:
-                AUC_dct[str(idx)] = [roc_auc_group]
-        print("\n FINISHED ITERATION {} FOR d = {} \n".format(iter, d))
+        if str(idx) in AUC_dct:
+            AUC_dct[str(idx)] += [roc_auc_group]
+        else:
+            AUC_dct[str(idx)] = [roc_auc_group]
+    print("\n FINISHED ITERATION {} FOR d = {} \n".format(iter, d))
 
-    df = pd.DataFrame()
-    df['AUC_overall'] = roc_auc_lst
-    df['RE_overall'] = RE_lst
+df = pd.DataFrame()
+df['AUC_overall'] = roc_auc_lst
+df['RE_overall'] = RE_lst
 
-    for group in sensitive_col.unique():
-        df['AUC_group_{}'.format(str(group))] = AUC_dct[str(group)]
-        df['RE_group_{}'.format(str(group))] = RE_dct[str(group)]
+for group in sensitive_col.unique():
+    df['AUC_group_{}'.format(str(group))] = AUC_dct[str(group)]
+    df['RE_group_{}'.format(str(group))] = RE_dct[str(group)]
 
-    results_dct["results_{}".format(d)] = df
-    print("finished d =  {}".format(d))
+results_dct["results_{}".format(d)] = df
+print("finished d =  {}".format(d))
 
-    with open('PCA_GD_results_SEX_pairwise.pickle', 'wb') as handle:
-        pickle.dump(results_dct, handle, protocol=pickle.HIGHEST_PROTOCOL)
+with open('PCA_base_results_SEX_classWeighted.pickle', 'wb') as handle:
+    pickle.dump(results_dct, handle, protocol=pickle.HIGHEST_PROTOCOL)

@@ -256,7 +256,7 @@ class FairnessAwarePCA_MW(BaseEstimator, TransformerMixin):
     def fit_transform(self, X, y=None, normalize_std=True):
         X_copy = X.copy()
         U = self._fit(X_copy, normalize_std)
-        U = U[:, :self.d]
+        #U = U[:, :self.d]
         X_copy -= self.mean_
         if normalize_std:
             X_copy /= self.std_
@@ -331,7 +331,7 @@ class FairnessAwarePCA_MW(BaseEstimator, TransformerMixin):
         X_copy -= self.mean_
         if self.normalized:
             X_copy /= self.std_
-        X_transformed = X_copy @ self.components_[:, :self.d]
+        X_transformed = X_copy @ self.components_#[:, :self.d]
         return X_transformed
 
 
